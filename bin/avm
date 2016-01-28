@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+
+UP=$'\033[A'
+DOWN=$'\033[B'
+PREFIX=${PREFIX-/usr/local}
+BASE_VERSIONS_DIR=$PREFIX/avm/versions
+
+log() {
+  printf "  \033[36m%10s\033[0m : \033[90m%s\033[0m\n" $1 $2
+}
+
+abort() {
+  printf "\n  \033[31mError: $@\033[0m\n\n" && exit 1
+}
+
+MIRROR=(${ANSIBLE-http://releases.ansible.com/ansible/})
+BINS=("ansible")
+
+VERSIONS_DIR=($BASE_VERSIONS_DIR/ansible)
+
+CURL_PARAMS=( "-L"
+              "-#")
+
+WGET_PARAMS=( "--no-check-certificate"
+              "-q"
+              "-O-")
+
+GET=
+
+# wget support
+command -v wget > /dev/null && GET="wget ${WGET_PARAMS[@]}"
+
+command -v curl > /dev/null && GET="curl ${CURL_PARAMS[@]}" && QUIET=false
+
+test -z "$GET" && abort "curl or wget required"
+
+DEFAULT=0
+QUIET=true
+ACTIVATE=true
+
+for dir in ${VERSIONS_DIR[@]}; do
+  test -d $dir || mkdir -p $dir
+done
+
+enter_fullscreen() {
+  tput smcup
+  stty -echo
+}
+
+leave_fullscreen() {
+  tput rmcup
+  stty echo
+}
+
+handle_sigint() {
+  leave_fullscreen
+  exit $?
+}
+
+handle_sigtstp() {
+  leave_fullscreen
+  kill -s SIGSTOP $$
+}
+
+display_help() {
+  cat <<-EOF
+
+  Usage: avm [options] [COMMAND] [args]
+
+  Environments:
+    avm [COMMAND] [args]            Uses default env (ansible)
+
+  Commands:
+
+    avm                              Output versions installed
+    avm latest                       Install or activate the latest ansible release
+    avm <version>                    Install ansible <version>
+    avm use <version> [args ...]     Execute ansible <version> with [args ...]
+    avm rm <version ...>             Remove the given version(s)
+    avm ls                           Output the versions of ansible available
+
+  Options:
+
+    -V, --version   Output current version of n
+    -h, --help      Display help information
+    -q, --quiet     Disable curl output (if available)
+    -d, --download  Download only
+
+  Aliases:
+
+    which   bin
+    use     as
+    list    ls
+    -       rm
+
+EOF
+}
+
+err_no_installed_print_help() {
+  printf "\n  \033[31mError: no installed version\033[0m\n"
+  display_help
+  exit 1
+}
+
+next_version_installed() {
+  list_versions_installed | grep $selected -A 1 | tail -n 1
+}
+
+prev_version_installed() {
+  list_versions_installed | grep $selected -B 1 | head -n 1
+}
+
+check_current_version() {
+  command -v ansible &> /dev/null
+  if test $? -eq 0; then
+    local current=$(ansible --version | head -n 1 | cut -d' ' -f2)
+    current=${current}
+    active=ansible/${current}
+  fi
+}
+
+versions_paths() {
+  find $BASE_VERSIONS_DIR -maxdepth 2 -type d \
+    | sed 's|'$BASE_VERSIONS_DIR'/||g' \
+    | egrep "/[0-9]+\.[0-9]+\.[0-9]+((\.|\-)[0-9]+)?$" \
+    | sort -k 1 -k 2,2n -k 3,3n -t .
+}
+
+display_versions_with_selected() {
+  selected=$1
+  for version in $(versions_paths); do
+    if test "$version" = "$selected"; then
+      printf "  \033[36m->\033[0m $version\033[0m\n"
+    else
+      printf "    \033[90m$version\033[0m\n"
+    fi
+  done
+  echo
+}
+
+list_versions_installed() {
+  for version in $(versions_paths); do
+    echo $version
+  done
+}
+
+display_versions() {
+  enter_fullscreen
+  check_current_version
+  clear
+  display_versions_with_selected $active
+
+  trap handle_sigint INT
+  trap handle_sigtstp SIGTSTP
+
+  while true; do
+    read -n 3 c
+    case "$c" in
+      $UP)
+        clear
+        display_versions_with_selected $(prev_version_installed)
+        ;;
+      $DOWN)
+        clear
+        display_versions_with_selected $(next_version_installed)
+        ;;
+      *)
+        activate $selected
+        leave_fullscreen
+        exit
+        ;;
+    esac
+  done
+}
+
+erase_line() {
+  printf "\033[1A\033[2K"
+}
+
+is_ok() {
+  if command -v curl > /dev/null; then
+    $GET -Is $1 | head -n 1 | grep 200 > /dev/null
+  else
+    $GET -S --spider 2>&1 $1 | head -n 1 | grep 200 > /dev/null
+  fi
+}
+
+tarball_url() {
+  local version=$1
+
+  echo "${MIRROR[$DEFAULT]}/${BINS[$DEFAULT]}-${version}.tar.gz"
+}
+
+disable_pax_mprotect() {
+  test -z $1 && abort "binary required"
+  local binary=$1
+
+  # try to disable mprotect via XATTR_PAX header
+  local PAXCTL=$(PATH="/sbin:/usr/sbin:$PATH" which paxctl-ng 2>&1)
+  local PAXCTL_ERROR=1
+  if [ -x "$PAXCTL" ]; then
+    $PAXCTL -l && $PAXCTL -m "$binary" >/dev/null 2>&1
+    PAXCTL_ERROR="$?"
+  fi
+
+  # try to disable mprotect via PT_PAX header
+  if [ $PAXCTL_ERROR != 0 ]; then
+    PAXCTL=$(PATH="/sbin:/usr/sbin:$PATH" which paxctl 2>&1)
+    if [ -x "$PAXCTL" ]; then
+      $PAXCTL -Cm "$binary" >/dev/null 2>&1
+    fi
+  fi
+}
+
+activate() {
+  local version=$1
+  check_current_version
+  if test "$version" != "$active"; then
+    local dir=$BASE_VERSIONS_DIR/$version
+    cd $dir
+    make > /dev/null 2>&1
+    sudo make install > /dev/null 2>&1
+    disable_pax_mprotect "$PREFIX/bin/ansible"
+  fi
+}
+
+install_latest() {
+  install $(display_latest_version)
+}
+
+install() {
+  local version=${1#v}
+
+  local dots=$(echo $version | sed 's/[^.]*//g')
+  if test ${#dots} -eq 1; then
+    version=$($GET 2> /dev/null ${MIRROR[DEFAULT]} \
+      | egrep "</a>" \
+      | egrep -o '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'\
+      | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
+      | egrep ^$version \
+      | tail -n1)
+
+    test $version || abort "invalid version ${1#v}"
+  fi
+
+  local dir=${VERSIONS_DIR[$DEFAULT]}/$version
+
+  if test -d $dir; then
+    if [[ ! -e $dir/n.lock ]] ; then
+      if $ACTIVATE ; then
+        activate ${BINS[$DEFAULT]}/$version
+      fi
+      exit
+    fi
+  fi
+
+  echo
+  log install ${BINS[$DEFAULT]}-v$version
+
+  local url=$(tarball_url $version)
+  is_ok $url || abort "invalid version $version"
+
+  log mkdir $dir
+  mkdir -p $dir
+  if [ $? -ne 0 ] ; then
+    abort "sudo required"
+  else
+    touch $dir/n.lock
+  fi
+
+  cd $dir
+
+  log fetch $url
+  $GET $url | tar -zx --strip-components=1
+  [ $QUIET == false ] && erase_line
+  rm -f $dir/n.lock
+
+  disable_pax_mprotect bin/ansible
+
+  if $ACTIVATE ; then
+    activate ${BINS[$DEFAULT]}/$version
+    local installed=$(ansible --version | cut -f1,2 -d' ' | sed -r 's/\s/\-/g')
+    log installed $installed
+  fi
+  echo
+}
+
+set_quiet() {
+  command -v curl > /dev/null && GET="$GET -s" && QUIET=true
+}
+
+remove_versions() {
+  test -z $1 && abort "version(s) required"
+  check_current_version
+  while test $# -ne 0; do
+    local version=${1#v}
+    [ "${BINS[$DEFAULT]}/$version" == "$active" ] && abort "cannot remove currently active version ($active)"
+    sudo rm -rf ${VERSIONS_DIR[$DEFAULT]}/$version
+    shift
+  done
+}
+
+display_latest_version() {
+  $GET 2> /dev/null ${MIRROR[$DEFAULT]} \
+    | egrep "</a>" \
+    | egrep -o '[0-9]+\.[\.0-9]+\.[0-9]+((\.|\-)[0-9])?' \
+    | uniq \
+    | awk '{ print "  " $1 }' \
+    | tail -n1
+}
+
+display_remote_versions() {
+  check_current_version
+  local versions=""
+  versions=$($GET 2> /dev/null ${MIRROR[$DEFAULT]} \
+    | egrep "</a>" \
+    | egrep -o '[0-9]+\.[\.0-9]+\.[0-9]+((\.|\-)[0-9])?' \
+    | uniq \
+    | awk '{ print "  " $1 }')
+
+  echo
+  local bin=${BINS[$DEFAULT]}
+  for v in $versions; do
+    if test "$active" = "$bin/$v"; then
+      printf "  \033[36m->\033[0m $v \033[0m\n"
+    else
+      if test -d $BASE_VERSIONS_DIR/$bin/$v; then
+        printf "    $v \033[0m\n"
+      else
+        printf "    \033[90m$v\033[0m\n"
+      fi
+    fi
+  done
+  echo
+}
+
+if test $# -eq 0; then
+  test -z "$(versions_paths)" && err_no_installed_print_help
+  display_versions
+else
+  while test $# -ne 0; do
+    case $1 in
+      -h|--help|help) display_help; exit ;;
+      -q|--quiet) set_quiet ;;
+      -d|--download) ACTIVATE=false ;;
+      --latest) display_latest_version; exit ;;
+      rm|-) shift; remove_versions $@; exit ;;
+      latest) install_latest; exit ;;
+      ls|list) display_remote_versions; exit ;;
+      *) install $1; exit ;;
+    esac
+    shift
+  done
+fi
