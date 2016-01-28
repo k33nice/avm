@@ -80,15 +80,11 @@ display_help() {
 
   Options:
 
-    -V, --version   Output current version of n
     -h, --help      Display help information
     -q, --quiet     Disable curl output (if available)
-    -d, --download  Download only
 
   Aliases:
 
-    which   bin
-    use     as
     list    ls
     -       rm
 
