@@ -75,7 +75,6 @@ display_help() {
     avm                              Output versions installed
     avm latest                       Install or activate the latest ansible release
     avm <version>                    Install ansible <version>
-    avm use <version> [args ...]     Execute ansible <version> with [args ...]
     avm rm <version ...>             Remove the given version(s)
     avm ls                           Output the versions of ansible available
 
