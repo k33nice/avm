@@ -219,6 +219,7 @@ activate() {
     sudo apt-get install python-crypto -y > /dev/null 2>&1
     make > /dev/null 2>&1
     sudo make install > /dev/null 2>&1
+    sudo chown -R `id -u`:`id -g` ~/.ansible
     disable_pax_mprotect "$PREFIX/bin/ansible"
   fi
 }
