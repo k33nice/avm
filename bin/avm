@@ -233,7 +233,7 @@ activate() {
     make > /dev/null 2>&1
     log make install
     sudo make install > /dev/null 2>&1
-    sudo chown -R $(id -u):$(id -g) ~/.ansible
+    sudo chown -fR $(id -u):$(id -g) ~/.ansible
     disable_pax_mprotect "$PREFIX/bin/ansible"
     log install success
   fi
@@ -250,7 +250,7 @@ install() {
   if test ${#dots} -eq 1; then
     version=$($GET 2> /dev/null ${MIRROR[DEFAULT]} \
       | egrep "</a>" \
-      | egrep -o '[0-9]+\.[\.0-9]+\.[0-9]+(((\.|\-)[0-9])+)?(\.[rc[0-9]+)?'\
+      | egrep -o '[0-9]+\.[\.0-9]+\.[0-9]+(((\.|\-)[0-9])+)?(\.[rc[0-9]+)?' \
       | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
       | egrep ^$version \
       | tail -n1)
