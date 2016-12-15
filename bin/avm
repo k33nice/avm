@@ -6,7 +6,7 @@ PREFIX=${PREFIX-/usr/local}
 BASE_VERSIONS_DIR=$PREFIX/avm/versions
 
 log() {
-  printf "  \033[36m%10s\033[0m : \033[90m%s\033[0m\n" $1 $2
+  printf "  \033[36m%10s\033[0m : \033[1;34m%s\033[0m\n" "$1" "$2"
 }
 
 abort() {
@@ -31,6 +31,22 @@ GET=
 command -v wget > /dev/null && GET="wget ${WGET_PARAMS[@]}"
 
 command -v curl > /dev/null && GET="curl ${CURL_PARAMS[@]}" && QUIET=false
+
+command -v python > /dev/null || abort "python required"
+
+libs_exsits=0
+
+python -c 'import paramiko' > /dev/null 2>&1 ; \
+python -c 'import PyYAML' > /dev/null 2>&1 ; \
+python -c 'import Jinja2' > /dev/null 2>&1 ; \
+python -c 'import httplib2' > /dev/null 2>&1 ; \
+python -c 'import six' > /dev/null 2>&1 ; \
+libs_exsits=1
+
+if test $libs_exsits -eq 0; then
+    abort "Python modules required paramiko PyYAML Jinja2 httplib2 six
+           (run: $ sudo pip isntall paramiko PyYAML Jinja2 httplib2 six)"
+fi
 
 test -z "$GET" && abort "curl or wget required"
 
@@ -125,9 +141,9 @@ display_versions_with_selected() {
   selected=$1
   for version in $(versions_paths); do
     if test "$version" = "$selected"; then
-      printf "  \033[36m->\033[0m $version\033[0m\n"
+      printf "  \033[33m->\033[0m $version\033[0m\n"
     else
-      printf "    \033[90m$version\033[0m\n"
+      printf "    \033[36m$version\033[0m\n"
     fi
   done
   echo
@@ -212,15 +228,14 @@ activate() {
   check_current_version
   if test "$version" != "$active"; then
     local dir=$BASE_VERSIONS_DIR/$version
-    cd $dir
-    log install python-setuptools
-    sudo apt-get install python-setuptools -y > /dev/null 2>&1
-    log install python-crypto
-    sudo apt-get install python-crypto -y > /dev/null 2>&1
+    cd "$dir" || exit
+    log make $version
     make > /dev/null 2>&1
+    log make install
     sudo make install > /dev/null 2>&1
-    sudo chown -R `id -u`:`id -g` ~/.ansible
+    sudo chown -R $(id -u):$(id -g) ~/.ansible
     disable_pax_mprotect "$PREFIX/bin/ansible"
+    log install success
   fi
 }
 
@@ -235,7 +250,7 @@ install() {
   if test ${#dots} -eq 1; then
     version=$($GET 2> /dev/null ${MIRROR[DEFAULT]} \
       | egrep "</a>" \
-      | egrep -o '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'\
+      | egrep -o '[0-9]+\.[\.0-9]+\.[0-9]+(((\.|\-)[0-9])+)?(\.[rc[0-9]+)?'\
       | sort -u -k 1,1n -k 2,2n -k 3,3n -t . \
       | egrep ^$version \
       | tail -n1)
@@ -260,29 +275,28 @@ install() {
   local url=$(tarball_url $version)
   is_ok $url || abort "invalid version $version"
 
-  log mkdir $dir
-  mkdir -p $dir
+  log mkdir "$dir"
+  mkdir -p "$dir"
   if [ $? -ne 0 ] ; then
     abort "sudo required"
   else
-    touch $dir/n.lock
+    touch "$dir"/n.lock
   fi
 
-  cd $dir
+  cd "$dir" || exit
 
-  log fetch $url
+  log fetch "$url"
   $GET $url | tar -zx --strip-components=1
   [ $QUIET == false ] && erase_line
-  rm -f $dir/n.lock
+  rm -f "$dir"/n.lock
 
   disable_pax_mprotect bin/ansible
 
   if $ACTIVATE ; then
-    activate ${BINS[$DEFAULT]}/$version
+    activate ${BINS[$DEFAULT]}/"$version"
     local installed=$(ansible --version | cut -f1,2 -d' ' | sed -r 's/\s/\-/g')
-    log installed $installed
+    log installed "$installed"
   fi
-  echo
 }
 
 set_quiet() {
@@ -322,12 +336,12 @@ display_remote_versions() {
   local bin=${BINS[$DEFAULT]}
   for v in $versions; do
     if test "$active" = "$bin/$v"; then
-      printf "  \033[36m->\033[0m $v \033[0m\n"
+      printf "  \033[1;32m-> $v \033[0m\n"
     else
       if test -d $BASE_VERSIONS_DIR/$bin/$v; then
-        printf "    $v \033[0m\n"
+        printf "    \033[1;32m$v \033[0m\n"
       else
-        printf "    \033[90m$v\033[0m\n"
+        printf "    $v\033[0m\n"
       fi
     fi
   done
