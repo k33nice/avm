@@ -41,11 +41,12 @@ python -c 'import PyYAML' > /dev/null 2>&1 ; \
 python -c 'import Jinja2' > /dev/null 2>&1 ; \
 python -c 'import httplib2' > /dev/null 2>&1 ; \
 python -c 'import six' > /dev/null 2>&1 ; \
+python -c 'import cryptography' > /dev/null 2>&1 ; \
 libs_exsits=1
 
 if test $libs_exsits -eq 0; then
-    abort "Python modules required paramiko PyYAML Jinja2 httplib2 six
-           (run: $ sudo pip isntall paramiko PyYAML Jinja2 httplib2 six)"
+    abort "Python modules required paramiko PyYAML Jinja2 httplib2 six cryptography
+           (run: $ sudo pip isntall paramiko PyYAML Jinja2 httplib2 six cryptography)"
 fi
 
 test -z "$GET" && abort "curl or wget required"
